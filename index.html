@@ -33,7 +33,7 @@
 </head>
 <body class="h-full bg-github-dark text-gray-100 flex flex-col font-sans antialiased overflow-hidden selection:bg-github-blue selection:text-white">
 
-    <!-- Top Navigation Bar -->
+    <!-- Top Navigation Bar (unchanged) -->
     <header class="bg-github-darker border-b border-github-border px-4 py-3 flex items-center justify-between shrink-0 select-none z-20 gap-3">
         <div class="flex items-center space-x-3 cursor-pointer shrink-0" onclick="goToRoot()">
             <div class="bg-github-accent p-2 rounded-lg text-white shadow-md">
@@ -105,7 +105,7 @@
                         <button onclick="formatAllRepositories()" class="bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 text-sm px-3 py-2 rounded-lg font-medium transition flex items-center gap-1.5">
                             <i class="fa-solid fa-triangle-exclamation"></i> Format All Repos
                         </button>
-                        <button onclick="fetchAndRenderRepos()" class="bg-github-blue hover:bg-blue-600 text-white text-xs px-3 py-2 rounded-lg font-medium transition flex items-center gap-1.5">
+                        <button onclick="manualSync()" class="bg-github-blue hover:bg-blue-600 text-white text-xs px-3 py-2 rounded-lg font-medium transition flex items-center gap-1.5">
                             <i class="fa-solid fa-sync"></i> Sync
                         </button>
                     </div>
@@ -199,7 +199,7 @@
 
     </main>
 
-    <!-- Modals -->
+    <!-- Modals (unchanged) -->
     <div id="inputModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
         <div class="bg-github-darker border border-github-border rounded-xl w-full max-w-md p-6 shadow-2xl">
             <h3 id="inputModalTitle" class="text-lg font-bold text-white mb-2">Input Required</h3>
@@ -263,15 +263,15 @@
 
     <script>
         // =========================================================================
-        //  OCTOFLOW 3.8 PRO – Smart Cache & Storage
-        // =========================================================================
-        //  All tokens, location, clipboard are stored in IndexedDB.
-        //  Repository cache is kept in memory (sessionStorage-like but in-memory for this version).
-        //  Cache includes full tree + file contents for the currently opened repo.
-        //  Cache is cleared when leaving the repo (back to repo list or root).
-        //  After any mutation, cache is invalidated and reloaded immediately.
+        //  OCTOFLOW 3.8 PRO – Smart Cache & Storage (Final)
+        //  Features:
+        //    - Optimistic UI updates for repo list & account counts
+        //    - Automatic background polling with cache‑busting until GitHub syncs
+        //    - Manual Sync button with cache‑busting
+        //    - Full file explorer, editor, upload, clipboard, tokens
         // =========================================================================
 
+        // (All helper functions and core logic remain exactly as in the last working version)
         // -------------------- IndexedDB Helpers --------------------
         const DB_NAME = 'OctoFlowDB';
         const STORE_NAME = 'appState';
@@ -328,70 +328,43 @@
         }
 
         // -------------------- Core Globals --------------------
-        let tokens = [];              // array of { token, sessionOnly }
+        let tokens = [];
         let accountsData = [];
         let currentAccount = null;
         let currentRepo = null;
         let currentPath = "";
         let currentFileSha = null;
-
-        // Clipboard object stored in IndexedDB, loaded on init
         let clipboard = null;
-
-        // In-memory repo cache: key = "owner/repo"
         const repoCache = {};
+        let cachedRepos = [];
 
-        // -------------------- Cache Functions --------------------
-        function getCacheKey(owner, repo) {
-            return `${owner}/${repo}`;
-        }
+        // -------------------- Cache Functions (unchanged) --------------------
+        function getCacheKey(owner, repo) { return `${owner}/${repo}`; }
+        function getCachedRepoData(owner, repo) { return repoCache[getCacheKey(owner, repo)] || null; }
+        function setCachedRepoData(owner, repo, data) { repoCache[getCacheKey(owner, repo)] = data; }
+        function clearRepoCache(owner, repo) { delete repoCache[getCacheKey(owner, repo)]; }
 
-        function getCachedRepoData(owner, repo) {
-            const key = getCacheKey(owner, repo);
-            return repoCache[key] || null;
-        }
-
-        function setCachedRepoData(owner, repo, data) {
-            const key = getCacheKey(owner, repo);
-            repoCache[key] = data;
-        }
-
-        function clearRepoCache(owner, repo) {
-            const key = getCacheKey(owner, repo);
-            delete repoCache[key];
-        }
-
-        // Fetch full repo: tree + all file contents with cache-busting
         async function fetchRepoFullData(owner, repo, token, onProgress) {
             const timestamp = Date.now();
-
-            // 1. Get default branch with cache-bust
             const repoInfoUrl = `https://api.github.com/repos/${owner}/${repo}?t=${timestamp}`;
             const repoInfoRes = await fetch(repoInfoUrl, { headers: { Authorization: `token ${token}` } });
             if (!repoInfoRes.ok) throw new Error('Failed to fetch repo info');
             const repoInfo = await repoInfoRes.json();
             const branch = repoInfo.default_branch;
 
-            // 2. Get recursive tree with cache-bust
             const treeUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1&t=${timestamp}`;
             const treeRes = await fetch(treeUrl, { headers: { Authorization: `token ${token}` } });
             if (!treeRes.ok) throw new Error('Failed to fetch tree');
             const treeData = await treeRes.json();
             const treeItems = treeData.tree || [];
 
-            // 3. Fetch content for each blob (file) with cache-bust
             const fileItems = treeItems.filter(item => item.type === 'blob');
             const totalFiles = fileItems.length;
             let processed = 0;
             const contentMap = {};
-
-            // Limit concurrency to avoid rate limiting
             const concurrency = 5;
             const chunks = [];
-            for (let i = 0; i < fileItems.length; i += concurrency) {
-                chunks.push(fileItems.slice(i, i + concurrency));
-            }
-
+            for (let i = 0; i < fileItems.length; i += concurrency) chunks.push(fileItems.slice(i, i + concurrency));
             for (const chunk of chunks) {
                 await Promise.all(chunk.map(async (item) => {
                     try {
@@ -400,36 +373,21 @@
                         if (res.ok) {
                             const data = await res.json();
                             contentMap[item.path] = data.content;
-                        } else {
-                            contentMap[item.path] = null;
-                        }
-                    } catch (e) {
-                        contentMap[item.path] = null;
-                    }
+                        } else { contentMap[item.path] = null; }
+                    } catch (e) { contentMap[item.path] = null; }
                     processed++;
                     if (onProgress) onProgress(processed, totalFiles);
                 }));
             }
-
-            const cacheData = {
-                branch: branch,
-                tree: treeItems,
-                contents: contentMap,
-                fetchedAt: Date.now()
-            };
-            return cacheData;
+            return { branch, tree: treeItems, contents: contentMap, fetchedAt: Date.now() };
         }
 
-        // Get file content from cache
         function getFileContentFromCache(owner, repo, path) {
             const data = getCachedRepoData(owner, repo);
-            if (data && data.contents && data.contents[path] !== undefined) {
-                return data.contents[path];
-            }
+            if (data && data.contents && data.contents[path] !== undefined) return data.contents[path];
             return null;
         }
 
-        // Filter tree items by path prefix (for current directory)
         function filterTreeByPath(treeItems, prefix) {
             if (!prefix) prefix = "";
             const prefixWithSlash = prefix ? prefix + '/' : '';
@@ -438,15 +396,12 @@
                 const path = item.path;
                 if (path.startsWith(prefixWithSlash) && path !== prefix) {
                     const relative = path.substring(prefixWithSlash.length);
-                    if (!relative.includes('/')) {
-                        result.push(item);
-                    }
+                    if (!relative.includes('/')) result.push(item);
                 }
             }
             return result;
         }
 
-        // Refresh: clear cache, reload, re-render
         async function refreshCurrentRepo(showLoadingIndicator = true) {
             if (!currentAccount || !currentRepo) return;
             clearRepoCache(currentAccount.username, currentRepo);
@@ -461,13 +416,9 @@
             }
         }
 
-        // Load repo into cache (if not already cached)
         async function loadRepoIntoCache(owner, repo, token) {
             const key = getCacheKey(owner, repo);
-            if (repoCache[key]) {
-                // Already cached, skip
-                return;
-            }
+            if (repoCache[key]) return;
             showProgressModal(`Loading ${repo}...`);
             let progress = 0;
             const updateProgress = (processed, total) => {
@@ -486,18 +437,13 @@
             }
         }
 
-        // Render current directory from cache
         async function renderCurrentDirectory() {
             if (!currentAccount || !currentRepo) return;
             const data = getCachedRepoData(currentAccount.username, currentRepo);
             if (!data) {
-                // fallback: load
                 await loadRepoIntoCache(currentAccount.username, currentRepo, currentAccount.token);
                 const newData = getCachedRepoData(currentAccount.username, currentRepo);
-                if (!newData) {
-                    renderFileTable([]);
-                    return;
-                }
+                if (!newData) { renderFileTable([]); return; }
                 renderFileTableFromCache(newData, currentPath);
             } else {
                 renderFileTableFromCache(data, currentPath);
@@ -510,46 +456,31 @@
             const items = filterTreeByPath(cacheData.tree, path);
             const tbody = document.getElementById('fileTableBody');
             tbody.innerHTML = '';
-
             if (path !== "") {
                 const parentPath = path.split('/').slice(0, -1).join('/');
                 const tr = document.createElement('tr');
                 tr.className = "hover:bg-github-border/30 transition cursor-pointer";
                 tr.onclick = () => { currentPath = parentPath; renderCurrentDirectory(); };
-                tr.innerHTML = `
-                    <td class="py-3 px-4 font-medium text-white flex items-center gap-2.5">
-                        <i class="fa-solid fa-arrow-turn-up text-github-blue"></i> ..
-                    </td>
-                    <td class="py-3 px-4 text-github-gray hidden md:table-cell">Parent Directory</td>
-                    <td class="py-3 px-4 text-github-gray hidden sm:table-cell">-</td>
-                    <td class="py-3 px-4 text-right"></td>
-                `;
+                tr.innerHTML = `<td class="py-3 px-4 font-medium text-white flex items-center gap-2.5"><i class="fa-solid fa-arrow-turn-up text-github-blue"></i> ..</td><td class="py-3 px-4 text-github-gray hidden md:table-cell">Parent Directory</td><td class="py-3 px-4 text-github-gray hidden sm:table-cell">-</td><td class="py-3 px-4 text-right"></td>`;
                 tbody.appendChild(tr);
             }
-
             if (items.length === 0) {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `<td colspan="4" class="py-8 text-center text-github-gray">This folder is empty.</td>`;
                 tbody.appendChild(tr);
                 return;
             }
-
-            // Sort: dirs first
             items.sort((a, b) => {
                 if (a.type === b.type) return a.path.localeCompare(b.path);
                 return a.type === 'tree' ? -1 : 1;
             });
-
             for (const item of items) {
                 const tr = document.createElement('tr');
                 tr.className = "hover:bg-github-border/30 transition border-b border-github-border/40 group";
                 const icon = item.type === 'tree' ? '<i class="fa-solid fa-folder text-yellow-400"></i>' : getFileIcon(item.path);
                 const isDir = item.type === 'tree';
                 const sha = item.sha;
-
-                // Use base name for display
                 const displayName = item.path.split('/').pop();
-
                 tr.innerHTML = `
                     <td class="py-3 px-4 font-medium text-white flex items-center gap-2.5 cursor-pointer" onclick="${isDir ? `currentPath='${item.path}'; renderCurrentDirectory();` : `openFileEditor('${item.path}', '${sha}')`}">
                         ${icon} <span class="hover:text-github-blue transition truncate max-w-xs">${displayName}</span>
@@ -569,11 +500,9 @@
             }
         }
 
-        // -------------------- Navigation --------------------
+        // -------------------- Navigation (unchanged) --------------------
         function goToRoot() {
-            if (currentAccount && currentRepo) {
-                clearRepoCache(currentAccount.username, currentRepo);
-            }
+            if (currentAccount && currentRepo) clearRepoCache(currentAccount.username, currentRepo);
             currentAccount = null;
             currentRepo = null;
             currentPath = "";
@@ -587,19 +516,15 @@
         }
 
         async function selectAccount(username) {
-            if (currentAccount && currentRepo) {
-                clearRepoCache(currentAccount.username, currentRepo);
-            }
+            if (currentAccount && currentRepo) clearRepoCache(currentAccount.username, currentRepo);
             currentAccount = accountsData.find(a => a.username === username);
             if (!currentAccount) return;
             currentRepo = null;
             currentPath = "";
-            
             document.getElementById('rootView').classList.add('hidden');
             document.getElementById('repoView').classList.remove('hidden');
             document.getElementById('fileView').classList.add('hidden');
             document.getElementById('editorView').classList.add('hidden');
-            
             document.getElementById('repoViewTitle').innerText = `${currentAccount.username}'s Repositories`;
             updateBreadcrumbs();
             await fetchAndRenderRepos();
@@ -607,41 +532,28 @@
         }
 
         async function selectRepo(repoName, path = "") {
-            if (currentAccount && currentRepo && currentRepo !== repoName) {
-                clearRepoCache(currentAccount.username, currentRepo);
-            }
+            if (currentAccount && currentRepo && currentRepo !== repoName) clearRepoCache(currentAccount.username, currentRepo);
             currentRepo = repoName;
             currentPath = path;
-
             document.getElementById('rootView').classList.add('hidden');
             document.getElementById('repoView').classList.add('hidden');
             document.getElementById('fileView').classList.remove('hidden');
             document.getElementById('editorView').classList.add('hidden');
-
             showLoading(true, 'Loading repository...');
             try {
                 await loadRepoIntoCache(currentAccount.username, currentRepo, currentAccount.token);
                 await renderCurrentDirectory();
-            } catch (e) {
-                // error already shown
-            }
+            } catch (e) {}
             showLoading(false);
             await updateStoredLocation();
         }
 
-        // -------------------- Root View --------------------
+        // -------------------- Root View (unchanged) --------------------
         function renderRootView() {
             const grid = document.getElementById('accountGrid');
             grid.innerHTML = '';
             if (accountsData.length === 0) {
-                grid.innerHTML = `
-                    <div class="col-span-full bg-github-darker border border-github-border rounded-xl p-8 text-center">
-                        <i class="fa-solid fa-key text-4xl text-yellow-500 mb-3"></i>
-                        <h3 class="text-lg font-bold text-white mb-1">No Authenticated Accounts</h3>
-                        <p class="text-xs text-github-gray mb-4">Please add a valid GitHub Personal Access Token with repo scope.</p>
-                        <button onclick="openTokenModal()" class="bg-github-accent text-white px-4 py-2 rounded-lg text-sm font-medium">Add Token</button>
-                    </div>
-                `;
+                grid.innerHTML = `<div class="col-span-full bg-github-darker border border-github-border rounded-xl p-8 text-center"><i class="fa-solid fa-key text-4xl text-yellow-500 mb-3"></i><h3 class="text-lg font-bold text-white mb-1">No Authenticated Accounts</h3><p class="text-xs text-github-gray mb-4">Please add a valid GitHub Personal Access Token with repo scope.</p><button onclick="openTokenModal()" class="bg-github-accent text-white px-4 py-2 rounded-lg text-sm font-medium">Add Token</button></div>`;
                 return;
             }
             accountsData.forEach(acc => {
@@ -677,20 +589,73 @@
             });
         }
 
-        // -------------------- Repo List --------------------
-        let cachedRepos = [];
+        // -------------------- Repo List with Polling --------------------
+        let pendingSync = false;
+        let syncTimeoutId = null;
+
+        // Update account counts from a fresh repo list
+        function updateAccountCounts(repos) {
+            const publicCount = repos.filter(r => !r.private).length;
+            const privateCount = repos.filter(r => r.private).length;
+            const acc = accountsData.find(a => a.username === currentAccount.username);
+            if (acc) {
+                acc.publicRepos = publicCount;
+                acc.privateRepos = privateCount;
+            }
+        }
+
+        // Poll until a condition is met
+        async function pollForRepoChange(checkFunc, onSuccess) {
+            if (pendingSync) return;
+            pendingSync = true;
+            showLoading(true, "Syncing with GitHub...");
+            let attempts = 0;
+            const maxAttempts = 6;
+            const delays = [1000, 2000, 4000, 6000, 8000, 10000];
+            while (attempts < maxAttempts) {
+                const timestamp = Date.now();
+                try {
+                    const res = await fetch(`https://api.github.com/user/repos?per_page=100&sort=updated&t=${timestamp}`, {
+                        headers: { Authorization: `token ${currentAccount.token}`, 'Accept': 'application/vnd.github.v3+json' }
+                    });
+                    if (res.ok) {
+                        const repos = await res.json();
+                        if (checkFunc(repos)) {
+                            cachedRepos = repos;
+                            renderRepoList(cachedRepos);
+                            updateAccountCounts(repos);
+                            showLoading(false);
+                            pendingSync = false;
+                            if (onSuccess) onSuccess();
+                            return;
+                        }
+                    }
+                } catch (e) {
+                    console.warn("Polling error:", e);
+                }
+                attempts++;
+                if (attempts < maxAttempts) {
+                    await new Promise(resolve => setTimeout(resolve, delays[attempts-1] || 2000));
+                }
+            }
+            // Timeout
+            showLoading(false);
+            pendingSync = false;
+            showCustomModal("Sync Delayed", "GitHub is taking longer than expected to reflect your changes. They are saved, but may not be visible yet. You can manually sync later using the 'Sync' button.", null);
+        }
+
+        // Main fetch with cache-busting
         async function fetchAndRenderRepos() {
             showLoading(true, "Fetching repositories...");
             try {
-                const res = await fetch(`https://api.github.com/user/repos?per_page=100&sort=updated`, {
-                    headers: { 
-                        Authorization: `token ${currentAccount.token}`,
-                        'Accept': 'application/vnd.github.v3+json'
-                    }
+                const timestamp = Date.now();
+                const res = await fetch(`https://api.github.com/user/repos?per_page=100&sort=updated&t=${timestamp}`, {
+                    headers: { Authorization: `token ${currentAccount.token}`, 'Accept': 'application/vnd.github.v3+json' }
                 });
                 if (res.ok) {
                     cachedRepos = await res.json();
                     renderRepoList(cachedRepos);
+                    updateAccountCounts(cachedRepos);
                 }
             } catch (e) {
                 console.error("Fetch repos error:", e);
@@ -698,7 +663,12 @@
             showLoading(false);
         }
 
-        // Helper: create a repo card element
+        // Manual sync button
+        function manualSync() {
+            fetchAndRenderRepos();
+        }
+
+        // Helper: create a repo card
         function createRepoCard(repo) {
             const card = document.createElement('div');
             card.className = "repo-card bg-github-darker border border-github-border rounded-xl p-5 hover:border-github-blue transition flex flex-col justify-between shadow-md";
@@ -731,9 +701,7 @@
                 grid.innerHTML = `<div class="col-span-full text-center py-12 text-github-gray">No repositories found.</div>`;
                 return;
             }
-            repos.forEach(repo => {
-                grid.appendChild(createRepoCard(repo));
-            });
+            repos.forEach(repo => grid.appendChild(createRepoCard(repo)));
         }
 
         function filterRepos() {
@@ -742,7 +710,7 @@
             renderRepoList(filtered);
         }
 
-        // -------------------- Editor --------------------
+        // -------------------- Editor (unchanged) --------------------
         async function openFileEditor(path, sha) {
             const content = getFileContentFromCache(currentAccount.username, currentRepo, path);
             if (content !== null && content !== undefined) {
@@ -754,15 +722,11 @@
                 document.getElementById('editorView').classList.remove('hidden');
                 return;
             }
-            // Fallback: fetch directly
             showLoading(true, "Downloading file content...");
             try {
                 const url = `https://api.github.com/repos/${currentAccount.username}/${currentRepo}/contents/${path}`;
                 const res = await fetch(url, {
-                    headers: { 
-                        Authorization: `token ${currentAccount.token}`,
-                        'Accept': 'application/vnd.github.v3+json'
-                    }
+                    headers: { Authorization: `token ${currentAccount.token}`, 'Accept': 'application/vnd.github.v3+json' }
                 });
                 if (res.ok) {
                     const data = await res.json();
@@ -773,9 +737,7 @@
                     document.getElementById('fileView').classList.add('hidden');
                     document.getElementById('editorView').classList.remove('hidden');
                 }
-            } catch (e) {
-                console.error("Open editor error:", e);
-            }
+            } catch (e) { console.error("Open editor error:", e); }
             showLoading(false);
         }
 
@@ -803,13 +765,11 @@
 
         function showSecretWarningModal(path, content, secrets) {
             const uniqueSecrets = [...new Set(secrets)];
-            const maskedSecrets = uniqueSecrets.map(s => s.substring(0, 6) + '...' + s.substring(s.length - 4)).join(', ');
+            const maskedSecrets = uniqueSecrets.map(s => s.substring(0,6)+'...'+s.substring(s.length-4)).join(', ');
             showCustomModal(
-                "⚠️ GitHub Secret Detected!", 
+                "⚠️ GitHub Secret Detected!",
                 `GitHub's server scanner or OctoFlow guard found sensitive tokens/keys in your code (${maskedSecrets}).\n\nGitHub API will reject commits containing active secrets unless bypassed. Would you like to force commit anyway?`,
-                async () => {
-                    await executeFinalCommit(path, content, true);
-                }
+                async () => { await executeFinalCommit(path, content, true); }
             );
         }
 
@@ -856,11 +816,7 @@
                 if (sha) body.sha = sha;
                 const res = await fetch(url, {
                     method: 'PUT',
-                    headers: { 
-                        Authorization: `token ${currentAccount.token}`, 
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/vnd.github.v3+json'
-                    },
+                    headers: { Authorization: `token ${currentAccount.token}`, 'Content-Type': 'application/json', 'Accept': 'application/vnd.github.v3+json' },
                     body: JSON.stringify(body)
                 });
                 if (res.ok) return { success: true };
@@ -873,17 +829,14 @@
             }
         }
 
-        // -------------------- Mutations with Auto-Refresh --------------------
-        // After any mutation, invalidate and refresh the cache immediately.
+        // -------------------- Mutations with Auto-Refresh (unchanged) --------------------
         async function invalidateAndRefresh() {
             if (currentAccount && currentRepo) {
-                // Small delay to allow GitHub API to propagate (especially for commits)
                 await new Promise(resolve => setTimeout(resolve, 500));
                 await refreshCurrentRepo(true);
             }
         }
 
-        // Delete
         async function deleteItem(path, sha, type) {
             const msg = type === 'dir' ? `Delete folder '${path}' and all its contents?` : `Delete '${path}'?`;
             showCustomModal("Delete", msg, async () => {
@@ -923,7 +876,6 @@
             }
         }
 
-        // Create folder
         function promptCreateFolder() {
             showInputModal("Create New Folder", "Enter folder name:", async (foldername) => {
                 if (!foldername) return;
@@ -935,7 +887,6 @@
             });
         }
 
-        // Create file
         function promptCreateFile() {
             showInputModal("Create New File", "Enter file name (e.g. index.html or src/app.js):", async (filename) => {
                 if (!filename) return;
@@ -947,7 +898,6 @@
             });
         }
 
-        // Format current directory
         async function formatCurrentDirectory() {
             showCustomModal("Wipe Location", "Delete all contents in this folder?", async () => {
                 showLoading(true, "Wiping folder contents...");
@@ -973,7 +923,7 @@
             });
         }
 
-        // Upload
+        // -------------------- Upload (unchanged) --------------------
         function triggerUploadModal(mode) {
             uploadMode = mode;
             const fileInput = document.getElementById('hiddenFileInput');
@@ -981,16 +931,11 @@
             fileInput.accept = mode === 'zip' ? '.zip' : '*/*';
             fileInput.click();
         }
-
-        let uploadQueue = [];
-        let uploadTotal = 0;
-        let uploadProcessed = 0;
-        let uploadMode = 'general';
+        let uploadQueue = [], uploadTotal = 0, uploadProcessed = 0, uploadMode = 'general';
 
         async function handleFileSelected(event) {
             const files = event.target.files;
             if (!files || files.length === 0) return;
-            
             uploadQueue = [];
             for (let file of files) {
                 if (uploadMode === 'zip' && file.name.endsWith('.zip')) {
@@ -1045,10 +990,7 @@
         }
 
         async function processUploadQueue() {
-            if (uploadQueue.length === 0) {
-                closeProgressModal();
-                return;
-            }
+            if (uploadQueue.length === 0) { closeProgressModal(); return; }
             uploadTotal = uploadQueue.length;
             uploadProcessed = 0;
             for (let i = 0; i < uploadQueue.length; i++) {
@@ -1057,10 +999,8 @@
                 const sha = await checkFileExists(item.targetPath);
                 if (sha && !item.overwrite) {
                     const action = await askConflict(item.name);
-                    if (action === 'skip') {
-                        uploadProcessed++;
-                        continue;
-                    } else if (action === 'overwrite') {
+                    if (action === 'skip') { uploadProcessed++; continue; }
+                    else if (action === 'overwrite') {
                         item.overwrite = true;
                         await uploadFile(item, sha);
                     }
@@ -1068,7 +1008,7 @@
                     await uploadFile(item, sha || null);
                 }
                 uploadProcessed++;
-                updateProgressModal(item.name, item.targetPath, ((i+1) / uploadTotal) * 100);
+                updateProgressModal(item.name, item.targetPath, ((i+1)/uploadTotal)*100);
             }
             closeProgressModal();
         }
@@ -1079,17 +1019,10 @@
                 const res = await fetch(url, {
                     headers: { Authorization: `token ${currentAccount.token}`, 'Accept': 'application/vnd.github.v3+json' }
                 });
-                if (res.ok) {
-                    const data = await res.json();
-                    return data.sha;
-                } else if (res.status === 404) {
-                    return null;
-                } else {
-                    return null;
-                }
-            } catch (e) {
-                return null;
-            }
+                if (res.ok) { const data = await res.json(); return data.sha; }
+                else if (res.status === 404) return null;
+                else return null;
+            } catch (e) { return null; }
         }
 
         async function uploadFile(item, sha = null) {
@@ -1100,39 +1033,26 @@
                 if (sha) body.sha = sha;
                 const res = await fetch(url, {
                     method: 'PUT',
-                    headers: { 
-                        Authorization: `token ${currentAccount.token}`, 
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/vnd.github.v3+json'
-                    },
+                    headers: { Authorization: `token ${currentAccount.token}`, 'Content-Type': 'application/json', 'Accept': 'application/vnd.github.v3+json' },
                     body: JSON.stringify(body)
                 });
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
                     console.warn("Upload failed for", item.name, err);
                 }
-            } catch (e) {
-                console.error("Upload error:", e);
-            }
+            } catch (e) { console.error("Upload error:", e); }
         }
 
         function askConflict(filename) {
             return new Promise((resolve) => {
                 const conflictDiv = document.getElementById('progressConflict');
                 conflictDiv.classList.remove('hidden');
-                document.getElementById('overwriteBtn').onclick = () => {
-                    conflictDiv.classList.add('hidden');
-                    resolve('overwrite');
-                };
-                document.getElementById('skipBtn').onclick = () => {
-                    conflictDiv.classList.add('hidden');
-                    resolve('skip');
-                };
+                document.getElementById('overwriteBtn').onclick = () => { conflictDiv.classList.add('hidden'); resolve('overwrite'); };
+                document.getElementById('skipBtn').onclick = () => { conflictDiv.classList.add('hidden'); resolve('skip'); };
                 document.getElementById('progressStatus').innerText = `File "${filename}" already exists.`;
             });
         }
 
-        // Extract ZIP from remote file
         async function extractZipFile(path, downloadUrl) {
             showLoading(true, "Downloading ZIP archive...");
             try {
@@ -1146,13 +1066,9 @@
                         const binary = atob(cachedContent);
                         const arrayBuffer = new ArrayBuffer(binary.length);
                         const uint8Array = new Uint8Array(arrayBuffer);
-                        for (let i = 0; i < binary.length; i++) {
-                            uint8Array[i] = binary.charCodeAt(i);
-                        }
+                        for (let i = 0; i < binary.length; i++) { uint8Array[i] = binary.charCodeAt(i); }
                         blob = new Blob([arrayBuffer], { type: 'application/zip' });
-                    } else {
-                        throw new Error('ZIP file not found in cache');
-                    }
+                    } else { throw new Error('ZIP file not found in cache'); }
                 }
                 const zip = new JSZip();
                 const zipContents = await zip.loadAsync(blob);
@@ -1180,9 +1096,7 @@
                     showProgressModal(`Extracting ZIP (${uploadTotal} files)`);
                     await processUploadQueue();
                     await invalidateAndRefresh();
-                } else {
-                    showLoading(false);
-                }
+                } else { showLoading(false); }
             } catch (e) {
                 console.error("Remote ZIP extraction failed", e);
                 showLoading(false);
@@ -1190,7 +1104,6 @@
             }
         }
 
-        // Download ZIP (uses cached content)
         async function downloadCurrentFolderAsZip() {
             showLoading(true, "Generating ZIP archive...");
             try {
@@ -1237,7 +1150,7 @@
             showLoading(false);
         }
 
-        // -------------------- Clipboard --------------------
+        // -------------------- Clipboard (unchanged) --------------------
         function setClipboardItem(action, path, type, sourceOwner, sourceRepo, sha) {
             clipboard = { action, path, type, sourceOwner, sourceRepo, sha };
             saveState({ tokens: tokens, location: getCurrentLocation(), clipboard: clipboard });
@@ -1255,7 +1168,6 @@
             const status = document.getElementById('clipboardStatus');
             const txt = document.getElementById('clipboardText');
             const actionSpan = document.getElementById('pasteActionName');
-
             if (clipboard) {
                 status.classList.remove('hidden');
                 container.classList.remove('hidden');
@@ -1347,13 +1259,11 @@
             }
         }
 
-        // -------------------- UI Helpers --------------------
+        // -------------------- UI Helpers (unchanged) --------------------
         function toggleActionMenu() {
             document.getElementById('actionMenuDropdown').classList.toggle('hidden');
         }
-        function closeActionMenu() {
-            document.getElementById('actionMenuDropdown').classList.add('hidden');
-        }
+        function closeActionMenu() { document.getElementById('actionMenuDropdown').classList.add('hidden'); }
         function closeEditor() {
             document.getElementById('editorView').classList.add('hidden');
             document.getElementById('fileView').classList.remove('hidden');
@@ -1403,9 +1313,7 @@
             };
         }
 
-        function closeInputModal() {
-            document.getElementById('inputModal').classList.add('hidden');
-        }
+        function closeInputModal() { document.getElementById('inputModal').classList.add('hidden'); }
 
         function showCustomModal(title, desc, confirmCallback = null) {
             document.getElementById('inputModalTitle').innerText = title;
@@ -1418,25 +1326,17 @@
             };
         }
 
-        // -------------------- Token Modal --------------------
+        // -------------------- Token Modal (unchanged) --------------------
         function openTokenModal() {
             const container = document.getElementById('tokenListContainer');
             container.innerHTML = '';
-            if (tokens.length === 0) {
-                appendTokenInputRow('', false);
-            } else {
-                tokens.forEach(t => appendTokenInputRow(t.token, t.sessionOnly));
-            }
+            if (tokens.length === 0) { appendTokenInputRow('', false); }
+            else { tokens.forEach(t => appendTokenInputRow(t.token, t.sessionOnly)); }
             document.getElementById('tokenModal').classList.remove('hidden');
         }
 
-        function closeTokenModal() {
-            document.getElementById('tokenModal').classList.add('hidden');
-        }
-
-        function addTokenRow() {
-            appendTokenInputRow('', false);
-        }
+        function closeTokenModal() { document.getElementById('tokenModal').classList.add('hidden'); }
+        function addTokenRow() { appendTokenInputRow('', false); }
 
         function appendTokenInputRow(val, sessionOnly) {
             const container = document.getElementById('tokenListContainer');
@@ -1460,10 +1360,7 @@
             for (let i = 0; i < inputs.length; i++) {
                 const token = inputs[i].value.trim();
                 if (token) {
-                    newTokens.push({
-                        token: token,
-                        sessionOnly: checkboxes[i].checked
-                    });
+                    newTokens.push({ token: token, sessionOnly: checkboxes[i].checked });
                 }
             }
             tokens = newTokens;
@@ -1473,15 +1370,13 @@
             goToRoot();
         }
 
-        // -------------------- Authentication & Initialization --------------------
+        // -------------------- Authentication & Initialization (unchanged) --------------------
         async function initAuthAndLoad(restoreLocation = true) {
             showLoading(true, "Authenticating GitHub accounts...");
             const state = await loadState();
             let loadedTokens = [];
             if (state && state.tokens) {
-                loadedTokens = state.tokens;
-                // Filter out sessionOnly tokens: those are not saved persistently, so we remove them
-                loadedTokens = loadedTokens.filter(t => !t.sessionOnly);
+                loadedTokens = state.tokens.filter(t => !t.sessionOnly);
                 await saveState({ tokens: loadedTokens, location: state.location || null, clipboard: state.clipboard || null });
                 tokens = loadedTokens;
                 clipboard = state.clipboard || null;
@@ -1496,10 +1391,7 @@
             for (let t of tokens) {
                 try {
                     const res = await fetch('https://api.github.com/user', {
-                        headers: { 
-                            Authorization: `token ${t.token}`,
-                            'Accept': 'application/vnd.github.v3+json'
-                        }
+                        headers: { Authorization: `token ${t.token}`, 'Accept': 'application/vnd.github.v3+json' }
                     });
                     if (res.ok) {
                         const user = await res.json();
@@ -1519,7 +1411,6 @@
                 }
             }
             showLoading(false);
-
             renderRootView();
 
             if (restoreLocation && state && state.location) {
@@ -1538,24 +1429,14 @@
                         document.getElementById('currentRepoBadge').innerText = `${currentRepo}${currentPath ? '/' + currentPath : ''}`;
                         await renderCurrentDirectory();
                         updateBreadcrumbs();
-                    } catch (e) {
-                        goToRoot();
-                    }
-                } else {
-                    goToRoot();
-                }
-            } else {
-                goToRoot();
-            }
+                    } catch (e) { goToRoot(); }
+                } else { goToRoot(); }
+            } else { goToRoot(); }
         }
 
         function getCurrentLocation() {
             if (currentAccount && currentRepo) {
-                return {
-                    username: currentAccount.username,
-                    repo: currentRepo,
-                    path: currentPath || ""
-                };
+                return { username: currentAccount.username, repo: currentRepo, path: currentPath || "" };
             }
             return null;
         }
@@ -1565,18 +1446,13 @@
             await saveState({ tokens: tokens, location: loc, clipboard: clipboard });
         }
 
-        // Manual refresh (click on refresh button)
         async function manualRefresh() {
-            if (currentAccount && currentRepo) {
-                await refreshCurrentRepo(true);
-            }
+            if (currentAccount && currentRepo) await refreshCurrentRepo(true);
         }
 
-        // -------------------- Breadcrumbs --------------------
         function updateBreadcrumbs() {
             const bc = document.getElementById('breadcrumbs');
             let html = `<span class="cursor-pointer hover:text-white transition flex items-center gap-1.5 font-medium text-blue-400" onclick="goToRoot()"><i class="fa-solid fa-house"></i> Root</span>`;
-
             if (currentAccount) {
                 html += ` <span class="text-github-gray">/</span> <span class="cursor-pointer hover:text-white transition font-medium" onclick="selectAccount('${currentAccount.username}')">${currentAccount.username}</span>`;
             }
@@ -1596,7 +1472,7 @@
         }
 
         // ================================================================
-        //  REPOSITORY ACTIONS – DIRECT DOM MANIPULATION (instant updates)
+        //  REPOSITORY ACTIONS – Optimistic UI + Automatic Polling
         // ================================================================
 
         function promptCreateRepo() {
@@ -1615,7 +1491,15 @@
                         const grid = document.getElementById('repoGrid');
                         const card = createRepoCard(newRepo);
                         grid.insertBefore(card, grid.firstChild);
+                        // Optimistically update account counts (public +1)
+                        const acc = accountsData.find(a => a.username === currentAccount.username);
+                        if (acc) acc.publicRepos += 1;
                         showLoading(false);
+                        // Start polling until the new repo appears in the official list
+                        pollForRepoChange(
+                            repos => repos.some(r => r.name === name),
+                            () => { /* success – already updated */ }
+                        );
                     } else {
                         showLoading(false);
                         showCustomModal("Error", "Failed to create repository.", null);
@@ -1638,6 +1522,7 @@
                         headers: { Authorization: `token ${currentAccount.token}`, 'Content-Type': 'application/json' },
                         body: JSON.stringify({ name: newName })
                     });
+                    // Optimistic update
                     const repo = cachedRepos.find(r => r.name === repoName);
                     if (repo) repo.name = newName;
                     const grid = document.getElementById('repoGrid');
@@ -1653,8 +1538,13 @@
                             break;
                         }
                     }
-                } catch (e) { console.error(e); }
-                showLoading(false);
+                    showLoading(false);
+                    // Poll: old name gone, new name exists
+                    pollForRepoChange(
+                        repos => repos.some(r => r.name === newName) && !repos.some(r => r.name === repoName),
+                        () => { /* success */ }
+                    );
+                } catch (e) { console.error(e); showLoading(false); }
             });
         }
 
@@ -1666,6 +1556,7 @@
                     headers: { Authorization: `token ${currentAccount.token}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ private: !currentPrivate })
                 });
+                // Optimistic update
                 const repo = cachedRepos.find(r => r.name === repoName);
                 if (repo) repo.private = !currentPrivate;
                 const grid = document.getElementById('repoGrid');
@@ -1682,8 +1573,22 @@
                         break;
                     }
                 }
-            } catch (e) { console.error(e); }
-            showLoading(false);
+                // Optimistically update account counts
+                const acc = accountsData.find(a => a.username === currentAccount.username);
+                if (acc) {
+                    if (!currentPrivate) { acc.publicRepos--; acc.privateRepos++; }
+                    else { acc.publicRepos++; acc.privateRepos--; }
+                }
+                showLoading(false);
+                // Poll: visibility changed
+                pollForRepoChange(
+                    repos => {
+                        const r = repos.find(r => r.name === repoName);
+                        return r && r.private === !currentPrivate;
+                    },
+                    () => { /* success */ }
+                );
+            } catch (e) { console.error(e); showLoading(false); }
         }
 
         async function deleteRepo(repoName) {
@@ -1694,6 +1599,7 @@
                         method: 'DELETE',
                         headers: { Authorization: `token ${currentAccount.token}` }
                     });
+                    // Optimistic removal
                     cachedRepos = cachedRepos.filter(r => r.name !== repoName);
                     const grid = document.getElementById('repoGrid');
                     const cards = grid.querySelectorAll('.repo-card');
@@ -1707,8 +1613,22 @@
                     if (grid.children.length === 0) {
                         grid.innerHTML = `<div class="col-span-full text-center py-12 text-github-gray">No repositories found.</div>`;
                     }
-                } catch (e) { console.error(e); }
-                showLoading(false);
+                    // Optimistically update account counts
+                    const acc = accountsData.find(a => a.username === currentAccount.username);
+                    if (acc) {
+                        // We don't know if it was public/private from cached list, so we'll just update from the cached list
+                        const publicCount = cachedRepos.filter(r => !r.private).length;
+                        const privateCount = cachedRepos.filter(r => r.private).length;
+                        acc.publicRepos = publicCount;
+                        acc.privateRepos = privateCount;
+                    }
+                    showLoading(false);
+                    // Poll: repo no longer exists
+                    pollForRepoChange(
+                        repos => !repos.some(r => r.name === repoName),
+                        () => { /* success */ }
+                    );
+                } catch (e) { console.error(e); showLoading(false); }
             });
         }
 
@@ -1730,12 +1650,19 @@
                     }
                     cachedRepos = [];
                     document.getElementById('repoGrid').innerHTML = `<div class="col-span-full text-center py-12 text-github-gray">No repositories found.</div>`;
-                } catch (e) { console.error(e); }
-                showLoading(false);
+                    const acc = accountsData.find(a => a.username === currentAccount.username);
+                    if (acc) { acc.publicRepos = 0; acc.privateRepos = 0; }
+                    showLoading(false);
+                    // Poll: list should be empty
+                    pollForRepoChange(
+                        repos => repos.length === 0,
+                        () => { /* success */ }
+                    );
+                } catch (e) { console.error(e); showLoading(false); }
             });
         }
 
-        // -------------------- Utilities --------------------
+        // -------------------- Utilities (unchanged) --------------------
         function formatBytes(bytes) {
             if (!bytes) return '0 B';
             const k = 1024, sizes = ['B', 'KB', 'MB', 'GB'];
@@ -1769,20 +1696,19 @@
 
         function getFileIcon(filename) {
             const ext = filename.split('.').pop().toLowerCase();
-            if (['js', 'ts', 'jsx', 'tsx'].includes(ext)) return '<i class="fa-brands fa-js text-yellow-400"></i>';
-            if (['html', 'htm'].includes(ext)) return '<i class="fa-brands fa-html5 text-orange-500"></i>';
-            if (['css', 'scss'].includes(ext)) return '<i class="fa-brands fa-css3-alt text-blue-400"></i>';
+            if (['js','ts','jsx','tsx'].includes(ext)) return '<i class="fa-brands fa-js text-yellow-400"></i>';
+            if (['html','htm'].includes(ext)) return '<i class="fa-brands fa-html5 text-orange-500"></i>';
+            if (['css','scss'].includes(ext)) return '<i class="fa-brands fa-css3-alt text-blue-400"></i>';
             if (['json'].includes(ext)) return '<i class="fa-solid fa-brackets-curly text-yellow-300"></i>';
             if (['md'].includes(ext)) return '<i class="fa-brands fa-markdown text-blue-300"></i>';
             if (['py'].includes(ext)) return '<i class="fa-brands fa-python text-blue-400"></i>';
-            if (['png', 'jpg', 'jpeg', 'gif', 'svg'].includes(ext)) return '<i class="fa-solid fa-file-image text-purple-400"></i>';
-            if (['zip', 'rar', 'tar', 'gz'].includes(ext)) return '<i class="fa-solid fa-file-zipper text-purple-300"></i>';
+            if (['png','jpg','jpeg','gif','svg'].includes(ext)) return '<i class="fa-solid fa-file-image text-purple-400"></i>';
+            if (['zip','rar','tar','gz'].includes(ext)) return '<i class="fa-solid fa-file-zipper text-purple-300"></i>';
             return '<i class="fa-solid fa-file-lines text-github-gray"></i>';
         }
 
         // -------------------- Initialization --------------------
         window.addEventListener('DOMContentLoaded', async () => {
-            // Migration: if there are tokens in localStorage, move to IndexedDB
             const oldTokens = localStorage.getItem('octoflow_tokens');
             if (oldTokens) {
                 const parsed = JSON.parse(oldTokens);
@@ -1803,7 +1729,6 @@
                     localStorage.removeItem('octoflow_clipboard');
                 }
             }
-
             await initAuthAndLoad(true);
         });
     </script>
