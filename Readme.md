@@ -190,8 +190,7 @@ Built with:
 **Enjoy managing your GitHub repos with OctoFlow!** 🚀
 
 ## Updates
-*It's Still in development Phase multiple updates appears so look out for it .
-current version is octaflow 3.8 pro .
+**It's Still in development Phase multiple updates appears so look out for it .
+Current version is octaflow 3.8 pro .
 we will launch multiple new updates
-
-Thank you Aurora Codes*
+Thank you Aurora Codes**
