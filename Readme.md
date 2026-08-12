@@ -147,16 +147,27 @@ OctoFlow works directly with the **GitHub REST API**. Here’s what you need to 
 
 ## 📥 Download the App
 
-To run OctoFlow locally, download the `Octaflow.html` file and open it in your browser.
+To run OctoFlow locally, download the `Octaflow.html` file.
+
+**Option 1 – Direct Download (click the button):**  
+GitHub may open the raw file in your browser. If that happens, use your browser’s **“Save as”** (Ctrl+S / Cmd+S) or right‑click the button and select **“Save link as…“**.
 
 <p align="center">
-  <a href="https://raw.githubusercontent.com/buildsaurora-collab/File-manager/main/Octaflow.html" download style="display: inline-block; padding: 14px 28px; background-color: #238636; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 1.1rem;">
+  <a href="https://raw.githubusercontent.com/buildsaurora-collab/File-manager/main/Octaflow.html" download="Octaflow.html" style="display: inline-block; padding: 14px 28px; background-color: #238636; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 1.1rem;">
     ⬇️ Download Octaflow.html
   </a>
 </p>
 
-> If you’re viewing this README on GitHub, the button will fetch the raw `Octaflow.html` file from this repository.  
-> You can also right‑click the link and select “Save link as…” to download it directly.
+**Option 2 – Right‑click the link above** and choose “Save link as…” to save the file directly.
+
+**Option 3 – Command line (curl/wget):**  
+```bash
+curl -O https://raw.githubusercontent.com/buildsaurora-collab/File-manager/main/Octaflow.html
+# or
+wget https://raw.githubusercontent.com/buildsaurora-collab/File-manager/main/Octaflow.html
+```
+
+Once downloaded, open `Octaflow.html` in your browser.
 
 ---
 
